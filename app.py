@@ -282,6 +282,8 @@ with tabs[0]:  # Stock Analysis Tab
                     if selected_ticker not in st.session_state.selected_stocks:
                         st.session_state.selected_stocks.append(selected_ticker)
                         st.session_state.current_stock = selected_ticker
+                        # Save to database
+                        add_to_watchlist(selected_ticker)
                         st.success(f"Added {selected_ticker} to your watchlist!")
                         st.rerun()
                     else:
@@ -295,6 +297,8 @@ with tabs[0]:  # Stock Analysis Tab
                         if selected_stock not in st.session_state.selected_stocks:
                             st.session_state.selected_stocks.append(selected_stock)
                             st.session_state.current_stock = selected_stock
+                            # Save to database
+                            add_to_watchlist(selected_stock)
                             st.success(f"Added {selected_stock} to your watchlist!")
                             st.rerun()
                         else:
@@ -320,6 +324,8 @@ with tabs[0]:  # Stock Analysis Tab
                     st.session_state.current_stock = st.session_state.selected_stocks[0]
                 else:
                     st.session_state.current_stock = None
+                # Remove from database
+                remove_from_watchlist(current_stock)
                 st.success(f"Removed {current_stock} from your watchlist!")
                 st.rerun()
         
@@ -449,7 +455,10 @@ with tabs[0]:  # Stock Analysis Tab
             Typical broker fees range from 0.05% to 0.5% per trade.
             """)
             broker_fee = st.slider("Broker Fee Percentage", min_value=0.01, max_value=1.0, value=0.05, step=0.01)
-            st.session_state.broker_fee_percent = broker_fee
+            # Save to database if changed
+            if broker_fee != st.session_state.broker_fee_percent:
+                st.session_state.broker_fee_percent = broker_fee
+                save_user_settings({'broker_fee_percent': broker_fee})
         
         # Auto-refresh
         refresh_exp = st.expander("Auto Refresh", expanded=False)
