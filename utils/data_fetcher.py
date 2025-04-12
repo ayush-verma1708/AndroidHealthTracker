@@ -1,9 +1,54 @@
-import pandas as pd
-import numpy as np
 import yfinance as yf
+import pandas as pd
+import streamlit as st
 import time
-import re
 
+# Cache of popular stocks for quick suggestions
+POPULAR_STOCKS = {
+    # US Stocks
+    "AAPL": "Apple Inc.",
+    "MSFT": "Microsoft Corporation",
+    "GOOGL": "Alphabet Inc. (Google)",
+    "AMZN": "Amazon.com Inc.",
+    "TSLA": "Tesla Inc.",
+    "META": "Meta Platforms Inc. (Facebook)",
+    "NVDA": "NVIDIA Corporation",
+    "JPM": "JPMorgan Chase & Co.",
+    "V": "Visa Inc.",
+    "WMT": "Walmart Inc.",
+    # Indian Stocks
+    "RELIANCE.NS": "Reliance Industries Ltd.",
+    "TCS.NS": "Tata Consultancy Services Ltd.",
+    "HDFCBANK.NS": "HDFC Bank Ltd.",
+    "INFY.NS": "Infosys Ltd.",
+    "ICICIBANK.NS": "ICICI Bank Ltd.",
+    "HINDUNILVR.NS": "Hindustan Unilever Ltd.",
+    "KOTAKBANK.NS": "Kotak Mahindra Bank Ltd.",
+    "BAJFINANCE.NS": "Bajaj Finance Ltd.",
+    "SBIN.NS": "State Bank of India",
+    "ASIANPAINT.NS": "Asian Paints Ltd.",
+    # UK Stocks
+    "BP.L": "BP p.l.c.",
+    "HSBA.L": "HSBC Holdings plc",
+    "GSK.L": "GSK plc",
+    "SHEL.L": "Shell plc",
+    "AZN.L": "AstraZeneca plc",
+    # Tech Stocks
+    "AMD": "Advanced Micro Devices, Inc.",
+    "INTC": "Intel Corporation",
+    "CRM": "Salesforce, Inc.",
+    "PYPL": "PayPal Holdings, Inc.",
+    # Finance Stocks
+    "BAC": "Bank of America Corporation",
+    "GS": "The Goldman Sachs Group, Inc.",
+    "C": "Citigroup Inc.",
+    # ETFs
+    "SPY": "SPDR S&P 500 ETF Trust",
+    "QQQ": "Invesco QQQ Trust",
+    "DIA": "SPDR Dow Jones Industrial Average ETF"
+}
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
 def get_available_stocks(search_term):
     """
     Searches for available stocks based on the search term.
@@ -14,53 +59,54 @@ def get_available_stocks(search_term):
     Returns:
         list: A list of matching stock tickers.
     """
-    # Common stock tickers from major markets as a fallback
-    common_stocks = {
-        'AAPL': 'Apple Inc.',
-        'MSFT': 'Microsoft Corporation',
-        'AMZN': 'Amazon.com, Inc.',
-        'GOOGL': 'Alphabet Inc.',
-        'META': 'Meta Platforms, Inc.',
-        'TSLA': 'Tesla, Inc.',
-        'NVDA': 'NVIDIA Corporation',
-        'JPM': 'JPMorgan Chase & Co.',
-        'V': 'Visa Inc.',
-        'JNJ': 'Johnson & Johnson',
-        'WMT': 'Walmart Inc.',
-        'PG': 'Procter & Gamble Co.',
-        'MA': 'Mastercard Incorporated',
-        'UNH': 'UnitedHealth Group Incorporated',
-        'HD': 'The Home Depot, Inc.',
-        'BAC': 'Bank of America Corporation',
-        'XOM': 'Exxon Mobil Corporation',
-        'INTC': 'Intel Corporation',
-        'VZ': 'Verizon Communications Inc.',
-        'CSCO': 'Cisco Systems, Inc.',
-        'NFLX': 'Netflix, Inc.',
-        'ADBE': 'Adobe Inc.',
-        'DIS': 'The Walt Disney Company',
-        'CRM': 'Salesforce, Inc.',
-        'KO': 'The Coca-Cola Company'
-    }
+    if not search_term:
+        # Return popular stocks as default suggestions
+        return list(POPULAR_STOCKS.keys())
     
-    # Check if the search term is a valid ticker
-    search_term = search_term.upper()
+    search_term = search_term.lower()
     
-    if search_term in common_stocks:
-        return [search_term]
-    
-    # If not an exact match, look for partial matches
+    # First check our cached popular stocks for quick matches
     matches = []
-    for ticker, name in common_stocks.items():
-        if search_term in ticker or search_term.lower() in name.lower():
+    for ticker, name in POPULAR_STOCKS.items():
+        if search_term in ticker.lower() or search_term in name.lower():
             matches.append(ticker)
     
-    # If we have too many matches, limit to 10
-    if len(matches) > 10:
-        matches = matches[:10]
+    # If we found matches in our cached list, return them
+    if matches:
+        return matches
+    
+    # Otherwise try to search using yfinance
+    try:
+        # Use yfinance's search capability
+        search_results = yf.Ticker(search_term)
+        if hasattr(search_results, 'info') and 'symbol' in search_results.info:
+            # Add the direct match if it exists
+            matches.append(search_results.info['symbol'])
         
-    return matches
+        # Try to get similar symbols
+        # Note: yfinance doesn't provide a direct method for this,
+        # so we'll try a few common variations
+        variations = [
+            f"{search_term}.NS",  # Indian stocks
+            f"{search_term}.L",   # London stocks
+            f"{search_term}.TO",  # Toronto stocks
+            f"{search_term}.HK",  # Hong Kong stocks
+        ]
+        
+        for var in variations:
+            try:
+                var_ticker = yf.Ticker(var)
+                if hasattr(var_ticker, 'info') and 'symbol' in var_ticker.info:
+                    matches.append(var_ticker.info['symbol'])
+            except:
+                continue
+                
+        return list(set(matches))  # Remove duplicates
+    except Exception as e:
+        st.warning(f"Error searching for stocks: {str(e)}")
+        return []
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes
 def fetch_stock_data(ticker, period="1d", interval="1m"):
     """
     Fetches stock data from Yahoo Finance API.
@@ -74,18 +120,48 @@ def fetch_stock_data(ticker, period="1d", interval="1m"):
         pandas.DataFrame: A DataFrame containing stock data or None if no data is available.
     """
     try:
-        # Download data from Yahoo Finance
-        stock = yf.Ticker(ticker)
-        df = stock.history(period=period, interval=interval)
+        # Fetch data
+        data = yf.download(
+            tickers=ticker,
+            period=period,
+            interval=interval,
+            progress=False,
+            show_errors=False
+        )
         
-        # If DataFrame is empty, return None
-        if df.empty:
+        # If no data is returned
+        if data.empty:
             return None
-        
+            
         # Calculate percentage change
-        df['Close_pct_change'] = df['Close'].pct_change() * 100
+        data['Close_pct_change'] = data['Close'].pct_change() * 100
         
-        return df
+        return data
+        
     except Exception as e:
-        print(f"Error fetching data for {ticker}: {e}")
+        st.error(f"Error fetching data for {ticker}: {str(e)}")
         return None
+
+def get_stock_suggestions(search_term):
+    """
+    Get stock suggestions based on search term.
+    
+    Args:
+        search_term (str): The search term for stock suggestions.
+        
+    Returns:
+        dict: Dictionary mapping ticker symbols to company names.
+    """
+    search_term = search_term.lower()
+    suggestions = {}
+    
+    # Search in our predefined popular stocks first (efficient)
+    for ticker, name in POPULAR_STOCKS.items():
+        if search_term in ticker.lower() or search_term in name.lower():
+            suggestions[ticker] = name
+    
+    # Limit to first 10 suggestions for performance
+    if len(suggestions) > 10:
+        return dict(list(suggestions.items())[:10])
+        
+    return suggestions

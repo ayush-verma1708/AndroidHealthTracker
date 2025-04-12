@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 import datetime
 import time
 import threading
-from utils.data_fetcher import fetch_stock_data, get_available_stocks
+from utils.data_fetcher import fetch_stock_data, get_available_stocks, get_stock_suggestions, POPULAR_STOCKS
 from utils.indicators import calculate_indicators
 from utils.signal_generator import generate_signals, calculate_composite_score
 from utils.risk_manager import calculate_risk_parameters
@@ -178,21 +178,77 @@ with tabs[0]:  # Stock Analysis Tab
             index=interval_index
         )
         
-        # Stock search and selection
+        # Improved stock search and selection with suggestions
         stock_search = st.text_input("Search for stocks (e.g., AAPL, MSFT)")
+        
+        # Show popular suggestions if no search term
+        if not stock_search:
+            st.write("Popular stocks:")
+            suggestion_cols = st.columns(2)
+            popular_stocks = list(POPULAR_STOCKS.items())[:10]  # Show first 10 popular stocks
+            
+            with suggestion_cols[0]:
+                for i in range(0, len(popular_stocks), 2):
+                    if i < len(popular_stocks):
+                        ticker, name = popular_stocks[i]
+                        if st.button(f"{ticker}: {name}", key=f"popular_{i}"):
+                            if ticker not in st.session_state.selected_stocks:
+                                st.session_state.selected_stocks.append(ticker)
+                                st.session_state.current_stock = ticker
+                                st.success(f"Added {ticker} to your watchlist!")
+                                st.rerun()
+                            else:
+                                st.warning(f"{ticker} is already in your watchlist!")
+            
+            with suggestion_cols[1]:
+                for i in range(1, len(popular_stocks), 2):
+                    if i < len(popular_stocks):
+                        ticker, name = popular_stocks[i]
+                        if st.button(f"{ticker}: {name}", key=f"popular_{i}"):
+                            if ticker not in st.session_state.selected_stocks:
+                                st.session_state.selected_stocks.append(ticker)
+                                st.session_state.current_stock = ticker
+                                st.success(f"Added {ticker} to your watchlist!")
+                                st.rerun()
+                            else:
+                                st.warning(f"{ticker} is already in your watchlist!")
+        
+        # Search for specific stocks
         if stock_search:
-            matches = get_available_stocks(stock_search)
-            if matches:
-                selected_stock = st.selectbox("Select a stock", options=matches)
+            # Get suggestions with company names
+            suggestions = get_stock_suggestions(stock_search)
+            
+            if suggestions:
+                # Convert to options list with ticker and company name
+                options = [f"{ticker}: {name}" for ticker, name in suggestions.items()]
+                selected_option = st.selectbox("Select a stock", options=options)
+                
+                # Extract ticker from selected option
+                selected_ticker = selected_option.split(':')[0].strip()
+                
                 if st.button("Add Stock"):
-                    if selected_stock not in st.session_state.selected_stocks:
-                        st.session_state.selected_stocks.append(selected_stock)
-                        st.session_state.current_stock = selected_stock
-                        st.success(f"Added {selected_stock} to your watchlist!")
+                    if selected_ticker not in st.session_state.selected_stocks:
+                        st.session_state.selected_stocks.append(selected_ticker)
+                        st.session_state.current_stock = selected_ticker
+                        st.success(f"Added {selected_ticker} to your watchlist!")
+                        st.rerun()
                     else:
-                        st.warning(f"{selected_stock} is already in your watchlist!")
+                        st.warning(f"{selected_ticker} is already in your watchlist!")
             else:
-                st.warning("No matching stocks found.")
+                # Fallback to original search method
+                matches = get_available_stocks(stock_search)
+                if matches:
+                    selected_stock = st.selectbox("Select a stock", options=matches)
+                    if st.button("Add Stock"):
+                        if selected_stock not in st.session_state.selected_stocks:
+                            st.session_state.selected_stocks.append(selected_stock)
+                            st.session_state.current_stock = selected_stock
+                            st.success(f"Added {selected_stock} to your watchlist!")
+                            st.rerun()
+                        else:
+                            st.warning(f"{selected_stock} is already in your watchlist!")
+                else:
+                    st.warning("No matching stocks found.")
         
         # Display and manage watchlist
         st.header("Your Watchlist")
@@ -409,7 +465,7 @@ with tabs[0]:  # Stock Analysis Tab
                                 signal_desc = "No clear signal. Wait for more definitive movement."
                                 
                             pnl_text = ""
-                            signal_strength = abs(last_score - 0.5) * 2  # Convert 0-1 score to 0-1 strength
+                            signal_strength = max(0, min(1, abs(last_score - 0.5) * 2))  # Convert 0-1 score to 0-1 strength, capped between 0-1
                     
                     # Display trading signal and recommendations
                     st.subheader("Trading Signal")
