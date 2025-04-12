@@ -127,13 +127,18 @@ with currency_col2:
 
 with currency_col3:
     # Alert frequency settings
-    st.session_state.alert_frequency = st.number_input(
+    alert_frequency = st.number_input(
         "Alert Frequency (minutes)", 
         min_value=5, 
         max_value=60, 
         value=st.session_state.alert_frequency,
         help="Minimum time between alerts for the same stock"
     )
+    
+    # Save to database if changed
+    if alert_frequency != st.session_state.alert_frequency:
+        st.session_state.alert_frequency = alert_frequency
+        save_user_settings({'alert_frequency': alert_frequency})
 
 with currency_col4:
     # Real-time monitoring toggle
@@ -335,12 +340,42 @@ with tabs[0]:  # Stock Analysis Tab
         # Create a more beginner-friendly experience with presets
         trading_exp = st.expander("Trading Strategy", expanded=False)
         with trading_exp:
+            # Get default strategy from database settings
+            user_settings = load_user_settings()
+            default_strategy = user_settings.get('strategy_type', 'Balanced') if user_settings else 'Balanced'
+            
+            # Map database value to display value
+            strategy_map = {
+                'Balanced': "Balanced (Default)",
+                'Aggressive': "Aggressive",
+                'Conservative': "Conservative",
+                'Custom': "Custom"
+            }
+            
+            # Find index
+            strategy_options = ["Balanced (Default)", "Aggressive", "Conservative", "Custom"]
+            if default_strategy in strategy_map:
+                default_display = strategy_map[default_strategy]
+                default_index = strategy_options.index(default_display) if default_display in strategy_options else 0
+            else:
+                default_index = 0
+            
             strategy_type = st.radio(
                 "Choose your trading style:",
-                options=["Balanced (Default)", "Aggressive", "Conservative", "Custom"],
-                index=0,
+                options=strategy_options,
+                index=default_index,
                 help="Select a preset strategy or customize your own indicators"
             )
+            
+            # Save changes to database
+            if strategy_type == "Balanced (Default)" and default_strategy != 'Balanced':
+                save_user_settings({'strategy_type': 'Balanced'})
+            elif strategy_type == "Aggressive" and default_strategy != 'Aggressive':
+                save_user_settings({'strategy_type': 'Aggressive'})
+            elif strategy_type == "Conservative" and default_strategy != 'Conservative':
+                save_user_settings({'strategy_type': 'Conservative'})
+            elif strategy_type == "Custom" and default_strategy != 'Custom':
+                save_user_settings({'strategy_type': 'Custom'})
             
             # Set parameters based on strategy selection
             if strategy_type == "Balanced (Default)":
