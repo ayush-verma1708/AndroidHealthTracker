@@ -20,33 +20,79 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize session state variables
+# Import database functions
+from utils.database import (
+    load_portfolio, save_portfolio, load_trades, save_trade,
+    load_alerts, save_alert, load_alert_logs, save_alert_log,
+    load_user_settings, save_user_settings,
+    load_watchlist, save_watchlist, add_to_watchlist, remove_from_watchlist,
+    get_overall_pnl
+)
+
+# Load data from database or initialize session state 
+if 'db_initialized' not in st.session_state:
+    # Load user settings first
+    user_settings = load_user_settings()
+    st.session_state.currency = user_settings['currency']
+    st.session_state.broker_fee_percent = user_settings['broker_fee_percent']
+    st.session_state.alert_frequency = user_settings['alert_frequency']
+    
+    # Load watchlist
+    st.session_state.selected_stocks = load_watchlist()
+    st.session_state.current_stock = st.session_state.selected_stocks[0] if st.session_state.selected_stocks else None
+    
+    # Load portfolio
+    st.session_state.portfolio = load_portfolio()
+    
+    # Load trades
+    st.session_state.trades = load_trades()
+    
+    # Load alerts
+    st.session_state.app_alerts = load_alerts()
+    
+    # Load alert logs
+    st.session_state.alert_log = load_alert_logs()
+    
+    # Calculate overall P&L
+    st.session_state.overall_pnl = get_overall_pnl()
+    
+    # Initialize real-time analyzer
+    st.session_state.real_time_analyzer = RealTimeAnalyzer()
+    st.session_state.monitoring_active = False
+    
+    # User phone number for alerts
+    st.session_state.user_phone = ""
+    
+    # Mark as initialized
+    st.session_state.db_initialized = True
+    
+# Ensure all necessary session state variables exist
 if 'selected_stocks' not in st.session_state:
     st.session_state.selected_stocks = []
 if 'current_stock' not in st.session_state:
     st.session_state.current_stock = None
 if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = {}  # Will store positions: {ticker: {'quantity': qty, 'avg_price': price, 'timestamp': purchase_time, 'position_type': 'LONG' or 'SHORT'}}
+    st.session_state.portfolio = {}
 if 'trades' not in st.session_state:
-    st.session_state.trades = []  # Will store trade history
+    st.session_state.trades = []
 if 'currency' not in st.session_state:
-    st.session_state.currency = 'INR'  # Default to INR
+    st.session_state.currency = 'INR'
 if 'broker_fee_percent' not in st.session_state:
-    st.session_state.broker_fee_percent = 0.05  # Default broker fee percentage
+    st.session_state.broker_fee_percent = 0.05
 if 'overall_pnl' not in st.session_state:
-    st.session_state.overall_pnl = 0.0  # Track overall profit/loss
+    st.session_state.overall_pnl = 0.0
 if 'alert_log' not in st.session_state:
-    st.session_state.alert_log = []  # Track alert history
+    st.session_state.alert_log = []
 if 'app_alerts' not in st.session_state:
-    st.session_state.app_alerts = []  # Store in-app alerts
+    st.session_state.app_alerts = []
 if 'real_time_analyzer' not in st.session_state:
     st.session_state.real_time_analyzer = RealTimeAnalyzer()
 if 'monitoring_active' not in st.session_state:
     st.session_state.monitoring_active = False
 if 'user_phone' not in st.session_state:
-    st.session_state.user_phone = ""  # User phone number for alerts
+    st.session_state.user_phone = ""
 if 'alert_frequency' not in st.session_state:
-    st.session_state.alert_frequency = 15  # Minutes between alerts
+    st.session_state.alert_frequency = 15
 
 # Header
 st.title("Real-Time Intraday Stock Analysis")
