@@ -99,12 +99,32 @@ def get_stock_suggestions(search_term):
             return dict(list(POPULAR_STOCKS.items())[:10])
 
         search_term = str(search_term).lower().strip()
-        matches = {k: v for k, v in POPULAR_STOCKS.items() 
-                  if search_term in k.lower() or search_term in v.lower()}
+        
+        # First try exact matches
+        exact_matches = {k: v for k, v in POPULAR_STOCKS.items() 
+                        if search_term == k.lower() or search_term == v.lower()}
+        if exact_matches:
+            return exact_matches
 
-        return dict(list(matches.items())[:10]) if matches else {}
+        # Then try partial matches
+        partial_matches = {k: v for k, v in POPULAR_STOCKS.items() 
+                         if search_term in k.lower() or search_term in v.lower()}
+        
+        # If no matches found, try searching with yfinance
+        if not partial_matches:
+            try:
+                import yfinance as yf
+                ticker = yf.Ticker(search_term.upper())
+                info = ticker.info
+                if info and 'shortName' in info:
+                    return {search_term.upper(): info['shortName']}
+            except:
+                pass
 
-    except Exception:
+        return dict(list(partial_matches.items())[:10]) if partial_matches else {}
+
+    except Exception as e:
+        print(f"Error in get_stock_suggestions: {str(e)}")
         return {}
 
 def get_available_stocks(search_term):
