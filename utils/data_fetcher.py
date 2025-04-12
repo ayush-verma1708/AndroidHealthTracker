@@ -120,8 +120,10 @@ def fetch_stock_data(ticker, period="1d", interval="1m"):
         pandas.DataFrame: A DataFrame containing stock data or None if no data is available.
     """
     try:
-        # Validate ticker format
-        if not isinstance(ticker, str):
+        # Validate and convert ticker format
+        if isinstance(ticker, (list, tuple)):
+            ticker = ticker[0] if len(ticker) > 0 else None
+        if not ticker or not isinstance(ticker, str):
             st.error(f"Invalid ticker format: {ticker}")
             return None
             
