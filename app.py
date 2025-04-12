@@ -9,7 +9,7 @@ import threading
 from utils.data_fetcher import fetch_stock_data, get_available_stocks, get_stock_suggestions, POPULAR_STOCKS
 from utils.indicators import calculate_indicators
 from utils.signal_generator import generate_signals, calculate_composite_score
-from utils.risk_manager import calculate_risk_parameters
+from utils.risk_manager import         calculate_risk_parameters
 from utils.alert_manager import send_trading_signal_alert, notify_app_alert
 from utils.real_time_analyzer import RealTimeAnalyzer
 
