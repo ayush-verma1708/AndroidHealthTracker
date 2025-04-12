@@ -3,12 +3,11 @@ import pandas as pd
 import streamlit as st
 import time
 
-# Cache of popular stocks for quick suggestions
+# Cache of popular stocks
 POPULAR_STOCKS = {
-    # US Stocks
     "AAPL": "Apple Inc.",
     "MSFT": "Microsoft Corporation",
-    "GOOGL": "Alphabet Inc. (Google)",
+    "GOOGL": "Alphabet Inc.",
     "AMZN": "Amazon.com Inc.",
     "TSLA": "Tesla Inc.",
     "META": "Meta Platforms Inc. (Facebook)",
@@ -16,7 +15,6 @@ POPULAR_STOCKS = {
     "JPM": "JPMorgan Chase & Co.",
     "V": "Visa Inc.",
     "WMT": "Walmart Inc.",
-    # Indian Stocks
     "RELIANCE.NS": "Reliance Industries Ltd.",
     "TCS.NS": "Tata Consultancy Services Ltd.",
     "HDFCBANK.NS": "HDFC Bank Ltd.",
@@ -27,182 +25,116 @@ POPULAR_STOCKS = {
     "BAJFINANCE.NS": "Bajaj Finance Ltd.",
     "SBIN.NS": "State Bank of India",
     "ASIANPAINT.NS": "Asian Paints Ltd.",
-    # UK Stocks
     "BP.L": "BP p.l.c.",
     "HSBA.L": "HSBC Holdings plc",
     "GSK.L": "GSK plc",
     "SHEL.L": "Shell plc",
     "AZN.L": "AstraZeneca plc",
-    # Tech Stocks
     "AMD": "Advanced Micro Devices, Inc.",
     "INTC": "Intel Corporation",
     "CRM": "Salesforce, Inc.",
     "PYPL": "PayPal Holdings, Inc.",
-    # Finance Stocks
     "BAC": "Bank of America Corporation",
     "GS": "The Goldman Sachs Group, Inc.",
     "C": "Citigroup Inc.",
-    # ETFs
     "SPY": "SPDR S&P 500 ETF Trust",
     "QQQ": "Invesco QQQ Trust",
     "DIA": "SPDR Dow Jones Industrial Average ETF"
 }
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
-def get_available_stocks(search_term):
-    """
-    Searches for available stocks based on the search term.
-    
-    Args:
-        search_term (str): The search term to look for in stock tickers or names.
-        
-    Returns:
-        list: A list of matching stock tickers.
-    """
-    if not search_term:
-        # Return popular stocks as default suggestions
-        return list(POPULAR_STOCKS.keys())
-    
-    search_term = search_term.lower()
-    
-    # First check our cached popular stocks for quick matches
-    matches = []
-    for ticker, name in POPULAR_STOCKS.items():
-        if search_term in ticker.lower() or search_term in name.lower():
-            matches.append(ticker)
-    
-    # If we found matches in our cached list, return them
-    if matches:
-        return matches
-    
-    # Otherwise try to search using yfinance
+def sanitize_ticker(ticker):
+    """Sanitize ticker input to handle various formats."""
+    if not ticker:
+        return None
+
     try:
-        # Use yfinance's search capability
-        search_results = yf.Ticker(search_term)
-        if hasattr(search_results, 'info') and 'symbol' in search_results.info:
-            # Add the direct match if it exists
-            matches.append(search_results.info['symbol'])
-        
-        # Try to get similar symbols
-        # Note: yfinance doesn't provide a direct method for this,
-        # so we'll try a few common variations
-        variations = [
-            f"{search_term}.NS",  # Indian stocks
-            f"{search_term}.L",   # London stocks
-            f"{search_term}.TO",  # Toronto stocks
-            f"{search_term}.HK",  # Hong Kong stocks
-        ]
-        
-        for var in variations:
-            try:
-                var_ticker = yf.Ticker(var)
-                if hasattr(var_ticker, 'info') and 'symbol' in var_ticker.info:
-                    matches.append(var_ticker.info['symbol'])
-            except:
-                continue
-                
-        return list(set(matches))  # Remove duplicates
-    except Exception as e:
-        st.warning(f"Error searching for stocks: {str(e)}")
-        return []
+        # Handle tuple/list case
+        if isinstance(ticker, (list, tuple)):
+            if not ticker:
+                return None
+            ticker = ticker[0]
+
+        # Convert to string and clean
+        ticker = str(ticker).strip().upper()
+
+        # Remove any invalid characters
+        ticker = ''.join(c for c in ticker if c.isalnum() or c in ['.','-'])
+
+        return ticker if ticker else None
+
+    except Exception:
+        return None
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def fetch_stock_data(ticker, period="1d", interval="1m"):
-    """
-    Fetches stock data from Yahoo Finance API.
-    
-    Args:
-        ticker (str): The stock ticker symbol.
-        period (str): The time period to fetch data for (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, etc.)
-        interval (str): The data interval (1m, 2m, 5m, 15m, 30m, 60m, 1h, 1d, etc.)
-        
-    Returns:
-        pandas.DataFrame: A DataFrame containing stock data or None if no data is available.
-    """
+    """Fetch stock data with robust error handling."""
     try:
-        # Validate and convert ticker format
-        if not ticker:
-            st.error("Empty ticker provided")
+        # Sanitize ticker
+        clean_ticker = sanitize_ticker(ticker)
+        if not clean_ticker:
+            st.error("Invalid ticker symbol")
             return None
-            
-        # Convert to string if it's a tuple/list or other type
-        if isinstance(ticker, (list, tuple)):
-            ticker = str(ticker[0]) if len(ticker) > 0 else None
-        else:
-            ticker = str(ticker)
-            
-        # Final validation
-        if not ticker:
-            st.error("Invalid ticker format")
-            return None
-            
-        # Clean the ticker string
-        ticker = ticker.strip().upper()
-            
-        # Add retry mechanism
-        max_retries = 3
-        for attempt in range(max_retries):
+
+        # Fetch data with retries
+        for attempt in range(3):
             try:
-                # Fetch data with explicit parameters
                 data = yf.download(
-                    tickers=ticker,
+                    tickers=clean_ticker,
                     period=period,
                     interval=interval,
                     progress=False,
-                    timeout=5,
-                    prepost=True
+                    timeout=10
                 )
-                
-                # Validate returned data
+
                 if data is None or data.empty:
-                    if attempt < max_retries - 1:
-                        time.sleep(1)  # Wait before retry
-                        continue
-                    st.warning(f"No data available for {ticker}")
-                    return None
-                
-                # Ensure data has required columns
-                required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-                if not all(col in data.columns for col in required_columns):
-                    st.error(f"Incomplete data received for {ticker}")
-                    return None
-                    
+                    time.sleep(1)
+                    continue
+
+                # Verify data structure
+                required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+                if not all(col in data.columns for col in required_cols):
+                    continue
+
                 # Calculate percentage change
                 data['Close_pct_change'] = data['Close'].pct_change() * 100
-                
                 return data
-                
+
             except Exception as e:
-                if attempt < max_retries - 1:
-                    time.sleep(1)  # Wait before retry
-                    continue
-                st.error(f"Error fetching data for {ticker} (Attempt {attempt + 1}/{max_retries}): {str(e)}")
-                return None
-                
+                if attempt == 2:  # Last attempt
+                    st.error(f"Failed to fetch data for {clean_ticker}: {str(e)}")
+                time.sleep(1)
+                continue
+
+        return None
+
     except Exception as e:
-        st.error(f"Critical error fetching data for {ticker}: {str(e)}")
+        st.error(f"Error processing request: {str(e)}")
         return None
 
 def get_stock_suggestions(search_term):
-    """
-    Get stock suggestions based on search term.
-    
-    Args:
-        search_term (str): The search term for stock suggestions.
-        
-    Returns:
-        dict: Dictionary mapping ticker symbols to company names.
-    """
-    search_term = search_term.lower()
-    suggestions = {}
-    
-    # Search in our predefined popular stocks first (efficient)
-    for ticker, name in POPULAR_STOCKS.items():
-        if search_term in ticker.lower() or search_term in name.lower():
-            suggestions[ticker] = name
-    
-    # Limit to first 10 suggestions for performance
-    if len(suggestions) > 10:
-        return dict(list(suggestions.items())[:10])
-        
-    return suggestions
+    """Get stock suggestions with error handling."""
+    try:
+        if not search_term:
+            return dict(list(POPULAR_STOCKS.items())[:10])
+
+        search_term = str(search_term).lower().strip()
+        matches = {k: v for k, v in POPULAR_STOCKS.items() 
+                  if search_term in k.lower() or search_term in v.lower()}
+
+        return dict(list(matches.items())[:10]) if matches else {}
+
+    except Exception:
+        return {}
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def get_available_stocks(search_term):
+    """Get available stocks with error handling."""
+    try:
+        if not search_term:
+            return list(POPULAR_STOCKS.keys())[:10]
+
+        suggestions = get_stock_suggestions(search_term)
+        return list(suggestions.keys())
+
+    except Exception:
+        return []
