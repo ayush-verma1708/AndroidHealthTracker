@@ -120,25 +120,53 @@ def fetch_stock_data(ticker, period="1d", interval="1m"):
         pandas.DataFrame: A DataFrame containing stock data or None if no data is available.
     """
     try:
-        # Fetch data
-        data = yf.download(
-            tickers=ticker,
-            period=period,
-            interval=interval,
-            progress=False
-        )
-        
-        # If no data is returned
-        if data.empty:
+        # Validate ticker format
+        if not isinstance(ticker, str):
+            st.error(f"Invalid ticker format: {ticker}")
             return None
             
-        # Calculate percentage change
-        data['Close_pct_change'] = data['Close'].pct_change() * 100
-        
-        return data
-        
+        # Add retry mechanism
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Fetch data with explicit parameters
+                data = yf.download(
+                    tickers=ticker,
+                    period=period,
+                    interval=interval,
+                    progress=False,
+                    timeout=5,
+                    prepost=True
+                )
+                
+                # Validate returned data
+                if data is None or data.empty:
+                    if attempt < max_retries - 1:
+                        time.sleep(1)  # Wait before retry
+                        continue
+                    st.warning(f"No data available for {ticker}")
+                    return None
+                
+                # Ensure data has required columns
+                required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+                if not all(col in data.columns for col in required_columns):
+                    st.error(f"Incomplete data received for {ticker}")
+                    return None
+                    
+                # Calculate percentage change
+                data['Close_pct_change'] = data['Close'].pct_change() * 100
+                
+                return data
+                
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(1)  # Wait before retry
+                    continue
+                st.error(f"Error fetching data for {ticker} (Attempt {attempt + 1}/{max_retries}): {str(e)}")
+                return None
+                
     except Exception as e:
-        st.error(f"Error fetching data for {ticker}: {str(e)}")
+        st.error(f"Critical error fetching data for {ticker}: {str(e)}")
         return None
 
 def get_stock_suggestions(search_term):
