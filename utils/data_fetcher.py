@@ -10,36 +10,11 @@ POPULAR_STOCKS = {
     "GOOGL": "Alphabet Inc.",
     "AMZN": "Amazon.com Inc.",
     "TSLA": "Tesla Inc.",
-    "META": "Meta Platforms Inc. (Facebook)",
+    "META": "Meta Platforms Inc.",
     "NVDA": "NVIDIA Corporation",
     "JPM": "JPMorgan Chase & Co.",
     "V": "Visa Inc.",
-    "WMT": "Walmart Inc.",
-    "RELIANCE.NS": "Reliance Industries Ltd.",
-    "TCS.NS": "Tata Consultancy Services Ltd.",
-    "HDFCBANK.NS": "HDFC Bank Ltd.",
-    "INFY.NS": "Infosys Ltd.",
-    "ICICIBANK.NS": "ICICI Bank Ltd.",
-    "HINDUNILVR.NS": "Hindustan Unilever Ltd.",
-    "KOTAKBANK.NS": "Kotak Mahindra Bank Ltd.",
-    "BAJFINANCE.NS": "Bajaj Finance Ltd.",
-    "SBIN.NS": "State Bank of India",
-    "ASIANPAINT.NS": "Asian Paints Ltd.",
-    "BP.L": "BP p.l.c.",
-    "HSBA.L": "HSBC Holdings plc",
-    "GSK.L": "GSK plc",
-    "SHEL.L": "Shell plc",
-    "AZN.L": "AstraZeneca plc",
-    "AMD": "Advanced Micro Devices, Inc.",
-    "INTC": "Intel Corporation",
-    "CRM": "Salesforce, Inc.",
-    "PYPL": "PayPal Holdings, Inc.",
-    "BAC": "Bank of America Corporation",
-    "GS": "The Goldman Sachs Group, Inc.",
-    "C": "Citigroup Inc.",
-    "SPY": "SPDR S&P 500 ETF Trust",
-    "QQQ": "Invesco QQQ Trust",
-    "DIA": "SPDR Dow Jones Industrial Average ETF"
+    "WMT": "Walmart Inc."
 }
 
 def sanitize_ticker(ticker):
@@ -65,54 +40,60 @@ def sanitize_ticker(ticker):
     except Exception:
         return None
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
 def fetch_stock_data(ticker, period="1d", interval="1m"):
-    """Fetch stock data with robust error handling."""
-    try:
-        # Sanitize ticker
-        clean_ticker = sanitize_ticker(ticker)
-        if not clean_ticker:
-            st.error("Invalid ticker symbol")
-            return None
+    """
+    Fetch stock data from Yahoo Finance with improved error handling.
 
-        # Fetch data with retries
-        for attempt in range(3):
+    Args:
+        ticker (str): Stock ticker symbol
+        period (str): Data period (e.g., '1d', '5d', '1mo', '3mo', '1y')
+        interval (str): Data interval (e.g., '1m', '5m', '15m', '30m', '60m', '1d')
+
+    Returns:
+        pandas.DataFrame or None: DataFrame with stock data or None if error
+    """
+    try:
+        # Convert ticker to string if it's not already
+        if isinstance(ticker, (list, tuple)):
+            ticker = str(ticker[0])
+        ticker = str(ticker).strip().upper()
+
+        # Create Ticker object
+        stock = yf.Ticker(ticker)
+
+        # Fetch data with retry mechanism
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                data = yf.download(
-                    tickers=clean_ticker,
-                    period=period,
-                    interval=interval,
-                    progress=False,
-                    timeout=10
-                )
+                data = stock.history(period=period, interval=interval)
 
                 if data is None or data.empty:
-                    time.sleep(1)
-                    continue
-
-                # Verify data structure
-                required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-                if not all(col in data.columns for col in required_cols):
-                    continue
+                    if attempt < max_retries - 1:
+                        time.sleep(1)
+                        continue
+                    st.warning(f"No data available for {ticker}")
+                    return None
 
                 # Calculate percentage change
                 data['Close_pct_change'] = data['Close'].pct_change() * 100
+
+                # Reset index to make datetime a column
+                data = data.reset_index()
                 return data
 
             except Exception as e:
-                if attempt == 2:  # Last attempt
-                    st.error(f"Failed to fetch data for {clean_ticker}: {str(e)}")
-                time.sleep(1)
-                continue
-
-        return None
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+                    continue
+                st.error(f"Error fetching data for {ticker}: {str(e)}")
+                return None
 
     except Exception as e:
-        st.error(f"Error processing request: {str(e)}")
+        st.error(f"Critical error processing {ticker}: {str(e)}")
         return None
 
 def get_stock_suggestions(search_term):
-    """Get stock suggestions with error handling."""
+    """Get stock suggestions based on search term."""
     try:
         if not search_term:
             return dict(list(POPULAR_STOCKS.items())[:10])
@@ -126,9 +107,8 @@ def get_stock_suggestions(search_term):
     except Exception:
         return {}
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
 def get_available_stocks(search_term):
-    """Get available stocks with error handling."""
+    """Get list of available stock tickers."""
     try:
         if not search_term:
             return list(POPULAR_STOCKS.keys())[:10]
