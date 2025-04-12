@@ -2,7 +2,7 @@ import os
 import datetime
 import json
 import pandas as pd
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.dialects.postgresql import JSONB
@@ -647,7 +647,7 @@ def get_overall_pnl(user_id=None, db=None):
         if user_id is None:
             user_id = get_default_user_id(db)
         
-        pnl_sum = db.query(db.func.sum(Trade.pnl)).filter(
+        pnl_sum = db.query(func.sum(Trade.pnl)).filter(
             Trade.user_id == user_id,
             Trade.pnl.isnot(None)
         ).scalar()

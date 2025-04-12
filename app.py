@@ -104,11 +104,17 @@ and risk management parameters to help with your trading decisions.
 # Add currency selector in main area
 currency_col1, currency_col2, currency_col3, currency_col4 = st.columns([1, 1, 1, 1])
 with currency_col1:
-    st.session_state.currency = st.selectbox(
+    selected_currency = st.selectbox(
         "Select Currency", 
         options=["INR", "USD", "EUR", "GBP", "JPY"],
-        index=0
+        index=["INR", "USD", "EUR", "GBP", "JPY"].index(st.session_state.currency) if st.session_state.currency in ["INR", "USD", "EUR", "GBP", "JPY"] else 0
     )
+    
+    # Save currency to database if changed
+    if selected_currency != st.session_state.currency:
+        st.session_state.currency = selected_currency
+        save_user_settings({'currency': selected_currency})
+        
     currency_symbol = "₹" if st.session_state.currency == "INR" else "$" if st.session_state.currency == "USD" else "€" if st.session_state.currency == "EUR" else "£" if st.session_state.currency == "GBP" else "¥"
 
 with currency_col2:
@@ -539,6 +545,9 @@ with tabs[0]:  # Stock Analysis Tab
                     if analysis:
                         signal = analysis['signal']
                         signal_text = signal['type']
+                        # Ensure signal strength exists
+                        if 'strength' not in signal:
+                            signal['strength'] = 0.0
                         signal_strength = signal['strength']
                         signal_desc = signal['desc']
                         
@@ -610,7 +619,9 @@ with tabs[0]:  # Stock Analysis Tab
                                 signal_desc = "No clear signal. Wait for more definitive movement."
                                 
                             pnl_text = ""
-                            signal_strength = max(0, min(1, abs(last_score - 0.5) * 2))  # Convert 0-1 score to 0-1 strength, capped between 0-1
+                            # Ensure signal_strength is defined with a safe default
+                            if 'signal_strength' not in locals():
+                                signal_strength = max(0, min(1, abs(last_score - 0.5) * 2))  # Convert 0-1 score to 0-1 strength, capped between 0-1
                     
                     # Display trading signal and recommendations
                     st.subheader("Trading Signal")
