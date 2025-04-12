@@ -14,80 +14,62 @@ def calculate_risk_parameters(latest_data, historical_data, risk_percentage=1.0)
     Returns:
         dict: Dictionary containing entry price, stop-loss and take-profit levels.
     """
-    # Current price to use as reference
-    current_price = latest_data['Close']
+    # Current price is the entry price
+    entry_price = latest_data['Close']
     
-    # Calculate ATR for determining stop-loss distance
-    atr = calculate_atr(historical_data)
-    latest_atr = atr.iloc[-1] if not atr.empty and not np.isnan(atr.iloc[-1]) else current_price * 0.01
+    # Calculate ATR for volatility-based stop loss
+    atr = calculate_atr(historical_data).iloc[-1]
     
-    # Get composite score for directional bias
-    composite_score = latest_data.get('composite_score', 0.5)
+    # Calculate support/resistance levels
+    support_resistance = calculate_support_resistance(historical_data)
+    support = support_resistance['support']
+    resistance = support_resistance['resistance']
     
-    # Determine if we're bullish (> 0.6) or bearish (< 0.4)
-    is_bullish = composite_score > 0.6
-    is_bearish = composite_score < 0.4
-    
-    # Calculate support and resistance
-    support, resistance = calculate_support_resistance(historical_data)
-    
-    # Adjust for missing or invalid values
-    if np.isnan(support) or support <= 0:
-        support = current_price * 0.95
-    if np.isnan(resistance) or resistance <= 0:
-        resistance = current_price * 1.05
-    
-    # Default risk parameters
-    entry_price = current_price
-    stop_loss = current_price * 0.95
-    take_profit = current_price * 1.05
-    
-    # Adjust based on market bias
-    if is_bullish:
-        # For bullish signals, entry at current price or slightly below
-        entry_price = current_price
-        
-        # Stop loss below support or using ATR
-        stop_loss = max(support * 0.99, current_price - (2 * latest_atr))
-        
-        # Take profit at resistance or with risk-reward ratio of 2:1
-        risk_amount = entry_price - stop_loss
-        take_profit = entry_price + (risk_amount * 2)
-    
-    elif is_bearish:
-        # For bearish signals, entry at current price or slightly above
-        entry_price = current_price
-        
-        # Stop loss above resistance or using ATR
-        stop_loss = min(resistance * 1.01, current_price + (2 * latest_atr))
-        
-        # Take profit at support or with risk-reward ratio of 2:1
-        risk_amount = stop_loss - entry_price
-        take_profit = entry_price - (risk_amount * 2)
-    
+    # Determine trend direction
+    if 'MA_20' in latest_data and 'MA_50' in latest_data:
+        short_ma = latest_data['MA_20']
+        long_ma = latest_data['MA_50']
+        uptrend = short_ma > long_ma
     else:
-        # Neutral - use technical levels
-        entry_price = current_price
-        stop_loss = current_price - latest_atr
-        take_profit = current_price + latest_atr
+        # Fallback if moving averages are not available
+        recent_data = historical_data.tail(10)
+        uptrend = recent_data['Close'].iloc[-1] > recent_data['Close'].iloc[0]
     
-    # Ensure stop loss doesn't exceed risk percentage of account
-    # This is a placeholder - in a real system you'd use account equity
-    # For now we'll assume it's proportional to the stock price
-    max_risk_amount = current_price * (risk_percentage / 100)
+    # Set stop loss based on trend, volatility (ATR), and support/resistance
+    if uptrend:
+        # In uptrend, stop loss is below the current price
+        # We use max of (entry - ATR * 2) and support for stop loss
+        stop_loss = max(entry_price - (atr * 2), support)
+        # Target is 1.5-2.5x the risk (risk/reward ratio)
+        risk = entry_price - stop_loss
+        take_profit = entry_price + (risk * 2)
+    else:
+        # In downtrend, stop loss is above the current price
+        # We use min of (entry + ATR * 2) and resistance for stop loss
+        stop_loss = min(entry_price + (atr * 2), resistance)
+        # Target is 1.5-2.5x the risk (risk/reward ratio)
+        risk = stop_loss - entry_price
+        take_profit = entry_price - (risk * 2)
     
-    if is_bullish and (entry_price - stop_loss) > max_risk_amount:
-        stop_loss = entry_price - max_risk_amount
-    elif is_bearish and (stop_loss - entry_price) > max_risk_amount:
-        stop_loss = entry_price + max_risk_amount
-    
-    # Round to 2 decimal places for readability
-    entry_price = round(entry_price, 2)
-    stop_loss = round(stop_loss, 2)
-    take_profit = round(take_profit, 2)
+    # Adjust based on risk percentage
+    risk_in_price = entry_price * (risk_percentage / 100)
+    if uptrend:
+        # Long position: we want to lose at most risk_percentage of our capital
+        if entry_price - stop_loss > risk_in_price:
+            stop_loss = entry_price - risk_in_price
+            take_profit = entry_price + (risk_in_price * 2)
+    else:
+        # Short position: we want to lose at most risk_percentage of our capital
+        if stop_loss - entry_price > risk_in_price:
+            stop_loss = entry_price + risk_in_price
+            take_profit = entry_price - (risk_in_price * 2)
     
     return {
         'entry_price': entry_price,
         'stop_loss': stop_loss,
-        'take_profit': take_profit
+        'take_profit': take_profit,
+        'atr': atr,
+        'support': support,
+        'resistance': resistance,
+        'uptrend': uptrend
     }

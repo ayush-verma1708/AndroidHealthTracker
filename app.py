@@ -271,44 +271,143 @@ with tabs[0]:  # Stock Analysis Tab
                 st.success(f"Removed {current_stock} from your watchlist!")
                 st.rerun()
         
-        # Technical indicator parameters
-        st.header("Indicator Settings")
-        
-        # Moving Average parameters
-        st.subheader("Moving Averages")
-        short_ma = st.slider("Short MA Period", min_value=5, max_value=50, value=20)
-        long_ma = st.slider("Long MA Period", min_value=20, max_value=200, value=50)
-        
-        # RSI parameters
-        st.subheader("RSI")
-        rsi_period = st.slider("RSI Period", min_value=7, max_value=21, value=14)
-        rsi_overbought = st.slider("RSI Overbought Threshold", min_value=65, max_value=85, value=70)
-        rsi_oversold = st.slider("RSI Oversold Threshold", min_value=15, max_value=35, value=30)
-        
-        # MACD parameters
-        st.subheader("MACD")
-        macd_fast = st.slider("MACD Fast Period", min_value=8, max_value=20, value=12)
-        macd_slow = st.slider("MACD Slow Period", min_value=20, max_value=40, value=26)
-        macd_signal = st.slider("MACD Signal Period", min_value=5, max_value=15, value=9)
-        
-        # Bollinger Bands parameters
-        st.subheader("Bollinger Bands")
-        bb_period = st.slider("Bollinger Bands Period", min_value=10, max_value=50, value=20)
-        bb_std = st.slider("Bollinger Bands Standard Deviation", min_value=1.0, max_value=3.0, value=2.0, step=0.1)
-        
-        # Risk parameters
-        st.header("Risk Management")
-        risk_percentage = st.slider("Risk Percentage per Trade", min_value=0.5, max_value=5.0, value=1.0, step=0.1)
+        # Technical indicator parameters - Using expanders to make UI cleaner
+        st.header("Trading Settings")
+
+        # Create a more beginner-friendly experience with presets
+        trading_exp = st.expander("Trading Strategy", expanded=False)
+        with trading_exp:
+            strategy_type = st.radio(
+                "Choose your trading style:",
+                options=["Balanced (Default)", "Aggressive", "Conservative", "Custom"],
+                index=0,
+                help="Select a preset strategy or customize your own indicators"
+            )
+            
+            # Set parameters based on strategy selection
+            if strategy_type == "Balanced (Default)":
+                short_ma = 20
+                long_ma = 50
+                rsi_period = 14
+                rsi_overbought = 70
+                rsi_oversold = 30
+                macd_fast = 12
+                macd_slow = 26
+                macd_signal = 9
+                bb_period = 20
+                bb_std = 2.0
+                risk_percentage = 1.0
+                st.info("Balanced strategy uses moderate indicators suitable for most market conditions")
+                
+            elif strategy_type == "Aggressive":
+                short_ma = 10
+                long_ma = 30
+                rsi_period = 7
+                rsi_overbought = 75
+                rsi_oversold = 25
+                macd_fast = 8
+                macd_slow = 21
+                macd_signal = 5
+                bb_period = 15
+                bb_std = 2.5
+                risk_percentage = 2.0
+                st.info("Aggressive strategy aims for more trade signals and higher potential returns, but with increased risk")
+                
+            elif strategy_type == "Conservative":
+                short_ma = 30
+                long_ma = 90
+                rsi_period = 21
+                rsi_overbought = 65
+                rsi_oversold = 35
+                macd_fast = 15
+                macd_slow = 30
+                macd_signal = 12
+                bb_period = 30
+                bb_std = 1.5
+                risk_percentage = 0.5
+                st.info("Conservative strategy focuses on stronger signals and lower risk, but may have fewer trade opportunities")
+                
+            else:  # Custom
+                # Show custom indicator settings with explanations
+                st.write("Customize your technical indicators:")
+                
+                # Moving Average parameters with explanation
+                st.subheader("Moving Averages")
+                st.markdown("""
+                **Moving Averages** track the average price over time to identify trends:
+                - **Short MA**: Faster-moving average that reacts quickly to price changes
+                - **Long MA**: Slower-moving average that shows longer-term trends
+                
+                When Short MA crosses above Long MA, it's a potential buy signal. When it crosses below, it's a potential sell signal.
+                """)
+                short_ma = st.slider("Short MA Period", min_value=5, max_value=50, value=20)
+                long_ma = st.slider("Long MA Period", min_value=20, max_value=200, value=50)
+                
+                # RSI parameters with explanation
+                st.subheader("RSI (Relative Strength Index)")
+                st.markdown("""
+                **RSI** measures speed and change of price movements on a scale of 0-100:
+                - Above Overbought level: Market may be overvalued, potential sell signal
+                - Below Oversold level: Market may be undervalued, potential buy signal
+                """)
+                rsi_period = st.slider("RSI Period", min_value=7, max_value=21, value=14)
+                rsi_overbought = st.slider("RSI Overbought Threshold", min_value=65, max_value=85, value=70)
+                rsi_oversold = st.slider("RSI Oversold Threshold", min_value=15, max_value=35, value=30)
+                
+                # MACD parameters with explanation
+                st.subheader("MACD (Moving Average Convergence Divergence)")
+                st.markdown("""
+                **MACD** shows relationship between two moving averages:
+                - **Fast Period**: Short-term EMA period
+                - **Slow Period**: Long-term EMA period 
+                - **Signal Period**: EMA of MACD line
+                
+                When MACD crosses above Signal line, it's a buy signal. When it crosses below, it's a sell signal.
+                """)
+                macd_fast = st.slider("MACD Fast Period", min_value=8, max_value=20, value=12)
+                macd_slow = st.slider("MACD Slow Period", min_value=20, max_value=40, value=26)
+                macd_signal = st.slider("MACD Signal Period", min_value=5, max_value=15, value=9)
+                
+                # Bollinger Bands parameters with explanation
+                st.subheader("Bollinger Bands")
+                st.markdown("""
+                **Bollinger Bands** show price volatility with 3 bands:
+                - Middle band: Moving average
+                - Upper and lower bands: Standard deviations from middle band
+                
+                Price near upper band may indicate overbought conditions.
+                Price near lower band may indicate oversold conditions.
+                """)
+                bb_period = st.slider("Bollinger Bands Period", min_value=10, max_value=50, value=20)
+                bb_std = st.slider("Bollinger Bands Standard Deviation", min_value=1.0, max_value=3.0, value=2.0, step=0.1)
+                
+                # Risk parameters
+                st.subheader("Risk Management")
+                st.markdown("""
+                **Risk Percentage** determines how much capital to risk per trade, which affects stop-loss placement.
+                Lower percentage = Lower risk but smaller potential gains
+                """)
+                risk_percentage = st.slider("Risk Percentage per Trade", min_value=0.5, max_value=5.0, value=1.0, step=0.1)
         
         # Broker settings
-        st.header("Broker Settings")
-        broker_fee = st.slider("Broker Fee Percentage", min_value=0.01, max_value=1.0, value=0.05, step=0.01)
-        st.session_state.broker_fee_percent = broker_fee
+        fee_exp = st.expander("Broker Settings", expanded=False)
+        with fee_exp:
+            st.markdown("""
+            Set your broker fee percentage to accurately calculate P&L after fees.
+            Typical broker fees range from 0.05% to 0.5% per trade.
+            """)
+            broker_fee = st.slider("Broker Fee Percentage", min_value=0.01, max_value=1.0, value=0.05, step=0.01)
+            st.session_state.broker_fee_percent = broker_fee
         
         # Auto-refresh
-        st.header("Auto Refresh")
-        auto_refresh = st.checkbox("Enable auto refresh", value=False)
-        refresh_interval = st.slider("Refresh interval (seconds)", min_value=10, max_value=300, value=60) if auto_refresh else 60
+        refresh_exp = st.expander("Auto Refresh", expanded=False)
+        with refresh_exp:
+            st.markdown("""
+            Enable auto-refresh to automatically update stock data at specified intervals.
+            This is useful for real-time monitoring without manual refreshing.
+            """)
+            auto_refresh = st.checkbox("Enable auto refresh", value=False)
+            refresh_interval = st.slider("Refresh interval (seconds)", min_value=10, max_value=300, value=60) if auto_refresh else 60
     
     # Main content area for stock analysis
     if st.session_state.current_stock:

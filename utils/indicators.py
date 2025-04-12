@@ -3,7 +3,7 @@ import numpy as np
 
 def calculate_indicators(df, short_ma=20, long_ma=50, rsi_period=14, 
                         macd_fast=12, macd_slow=26, macd_signal=9,
-                        bb_period=20, bb_std=2):
+                        bb_period=20, bb_std=2.0):
     """
     Calculate various technical indicators for the stock data.
     
@@ -83,10 +83,10 @@ def calculate_support_resistance(df, window=10):
         window (int): Look-back window to identify support/resistance points.
         
     Returns:
-        tuple: Support and resistance prices.
+        dict: Dictionary containing support and resistance prices.
     """
     recent_df = df.tail(window)
     support = recent_df['Low'].min()
     resistance = recent_df['High'].max()
     
-    return support, resistance
+    return {'support': support, 'resistance': resistance}
