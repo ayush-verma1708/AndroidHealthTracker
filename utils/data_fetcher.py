@@ -121,11 +121,23 @@ def fetch_stock_data(ticker, period="1d", interval="1m"):
     """
     try:
         # Validate and convert ticker format
-        if isinstance(ticker, (list, tuple)):
-            ticker = ticker[0] if len(ticker) > 0 else None
-        if not ticker or not isinstance(ticker, str):
-            st.error(f"Invalid ticker format: {ticker}")
+        if not ticker:
+            st.error("Empty ticker provided")
             return None
+            
+        # Convert to string if it's a tuple/list or other type
+        if isinstance(ticker, (list, tuple)):
+            ticker = str(ticker[0]) if len(ticker) > 0 else None
+        else:
+            ticker = str(ticker)
+            
+        # Final validation
+        if not ticker:
+            st.error("Invalid ticker format")
+            return None
+            
+        # Clean the ticker string
+        ticker = ticker.strip().upper()
             
         # Add retry mechanism
         max_retries = 3
