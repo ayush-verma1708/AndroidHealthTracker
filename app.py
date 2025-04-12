@@ -718,8 +718,8 @@ with tabs[0]:  # Stock Analysis Tab
                                     pnl = sell_value - buy_value - buy_fee - sell_fee
                                     pnl_percent = (pnl / buy_value) * 100
                                     
-                                    # Record the trade
-                                    st.session_state.trades.append({
+                                    # Create trade record
+                                    trade_record = {
                                         'ticker': st.session_state.current_stock,
                                         'action': 'SELL',
                                         'position_type': 'LONG',
@@ -731,7 +731,13 @@ with tabs[0]:  # Stock Analysis Tab
                                         'pnl_percent': pnl_percent,
                                         'timestamp': datetime.datetime.now(),
                                         'confidence_score': last_score
-                                    })
+                                    }
+                                    
+                                    # Save to session state
+                                    st.session_state.trades.append(trade_record)
+                                    
+                                    # Save to database
+                                    save_trade(trade_record)
                                     
                                     # Update overall P&L
                                     st.session_state.overall_pnl += pnl
