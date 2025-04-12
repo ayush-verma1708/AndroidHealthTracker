@@ -4,10 +4,14 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import datetime
+import time
+import threading
 from utils.data_fetcher import fetch_stock_data, get_available_stocks
 from utils.indicators import calculate_indicators
 from utils.signal_generator import generate_signals, calculate_composite_score
 from utils.risk_manager import calculate_risk_parameters
+from utils.alert_manager import send_trading_signal_alert, notify_app_alert
+from utils.real_time_analyzer import RealTimeAnalyzer
 
 # Set page title and icon
 st.set_page_config(
@@ -22,7 +26,7 @@ if 'selected_stocks' not in st.session_state:
 if 'current_stock' not in st.session_state:
     st.session_state.current_stock = None
 if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = {}  # Will store positions: {ticker: {'quantity': qty, 'avg_price': price, 'timestamp': purchase_time}}
+    st.session_state.portfolio = {}  # Will store positions: {ticker: {'quantity': qty, 'avg_price': price, 'timestamp': purchase_time, 'position_type': 'LONG' or 'SHORT'}}
 if 'trades' not in st.session_state:
     st.session_state.trades = []  # Will store trade history
 if 'currency' not in st.session_state:
@@ -31,6 +35,18 @@ if 'broker_fee_percent' not in st.session_state:
     st.session_state.broker_fee_percent = 0.05  # Default broker fee percentage
 if 'overall_pnl' not in st.session_state:
     st.session_state.overall_pnl = 0.0  # Track overall profit/loss
+if 'alert_log' not in st.session_state:
+    st.session_state.alert_log = []  # Track alert history
+if 'app_alerts' not in st.session_state:
+    st.session_state.app_alerts = []  # Store in-app alerts
+if 'real_time_analyzer' not in st.session_state:
+    st.session_state.real_time_analyzer = RealTimeAnalyzer()
+if 'monitoring_active' not in st.session_state:
+    st.session_state.monitoring_active = False
+if 'user_phone' not in st.session_state:
+    st.session_state.user_phone = ""  # User phone number for alerts
+if 'alert_frequency' not in st.session_state:
+    st.session_state.alert_frequency = 15  # Minutes between alerts
 
 # Header
 st.title("Real-Time Intraday Stock Analysis")
@@ -40,8 +56,8 @@ and risk management parameters to help with your trading decisions.
 """)
 
 # Add currency selector in main area
-currency_col1, currency_col2, currency_col3 = st.columns([1, 2, 1])
-with currency_col2:
+currency_col1, currency_col2, currency_col3, currency_col4 = st.columns([1, 1, 1, 1])
+with currency_col1:
     st.session_state.currency = st.selectbox(
         "Select Currency", 
         options=["INR", "USD", "EUR", "GBP", "JPY"],
@@ -49,8 +65,96 @@ with currency_col2:
     )
     currency_symbol = "₹" if st.session_state.currency == "INR" else "$" if st.session_state.currency == "USD" else "€" if st.session_state.currency == "EUR" else "£" if st.session_state.currency == "GBP" else "¥"
 
+with currency_col2:
+    # Phone number input for SMS alerts
+    st.session_state.user_phone = st.text_input(
+        "Phone Number for Alerts (E.164 format)", 
+        value=st.session_state.user_phone,
+        help="Enter your phone number in E.164 format (e.g., +919876543210) to receive SMS alerts"
+    )
+
+with currency_col3:
+    # Alert frequency settings
+    st.session_state.alert_frequency = st.number_input(
+        "Alert Frequency (minutes)", 
+        min_value=5, 
+        max_value=60, 
+        value=st.session_state.alert_frequency,
+        help="Minimum time between alerts for the same stock"
+    )
+
+with currency_col4:
+    # Real-time monitoring toggle
+    if st.session_state.monitoring_active:
+        if st.button("❌ Stop Real-Time Monitoring"):
+            st.session_state.real_time_analyzer.stop_monitoring()
+            st.session_state.monitoring_active = False
+            st.success("Real-time monitoring stopped")
+            st.rerun()
+    else:
+        if st.button("✅ Start Real-Time Monitoring"):
+            if len(st.session_state.selected_stocks) > 0:
+                # Collect indicator settings
+                indicator_settings = {
+                    'short_ma': 20,
+                    'long_ma': 50,
+                    'rsi_period': 14,
+                    'rsi_overbought': 70,
+                    'rsi_oversold': 30,
+                    'macd_fast': 12,
+                    'macd_slow': 26,
+                    'macd_signal': 9,
+                    'bb_period': 20,
+                    'bb_std': 2.0,
+                    'risk_percentage': 1.0
+                }
+                
+                # Start monitoring
+                success = st.session_state.real_time_analyzer.start_monitoring(
+                    st.session_state.selected_stocks,
+                    indicator_settings,
+                    st.session_state.user_phone if st.session_state.user_phone else None,
+                    st.session_state.alert_frequency
+                )
+                
+                if success:
+                    st.session_state.monitoring_active = True
+                    st.success("Real-time monitoring started")
+                    st.rerun()
+                else:
+                    st.error("Failed to start real-time monitoring")
+            else:
+                st.warning("Please add stocks to your watchlist first")
+
+# Display any unread alerts
+if st.session_state.app_alerts:
+    unread_alerts = [a for a in st.session_state.app_alerts if not a.get('is_read', False)]
+    if unread_alerts:
+        st.sidebar.subheader(f"📣 New Alerts ({len(unread_alerts)})")
+        for i, alert in enumerate(unread_alerts):
+            alert_time = alert['timestamp'].strftime("%H:%M:%S")
+            signal_type = alert['signal_type']
+            ticker = alert['ticker']
+            price = alert['price']
+            
+            # Set color based on signal type
+            if signal_type == "BUY" or signal_type == "COVER":
+                color = "green"
+            elif signal_type == "SELL" or signal_type == "SHORT":
+                color = "red"
+            else:
+                color = "orange"
+                
+            st.sidebar.markdown(f"<div style='padding:10px;margin-bottom:10px;border-left:4px solid {color};background-color:rgba(0,0,0,0.05);'>"
+                              f"<b style='color:{color};'>{signal_type}</b> {ticker} @ {currency_symbol}{price:.2f} "
+                              f"<span style='float:right;font-size:0.8em;color:gray;'>{alert_time}</span>"
+                              f"</div>", unsafe_allow_html=True)
+            
+            # Mark alert as read
+            st.session_state.app_alerts[len(st.session_state.app_alerts) - len(unread_alerts) + i]['is_read'] = True
+
 # Main dashboard tabs
-tabs = st.tabs(["Stock Analysis", "Portfolio", "Trade History", "Beginner's Guide"])
+tabs = st.tabs(["Stock Analysis", "Portfolio", "Trade History", "Alerts & Signals", "Beginner's Guide"])
 
 with tabs[0]:  # Stock Analysis Tab
     # Sidebar for inputs and filters
@@ -148,7 +252,7 @@ with tabs[0]:  # Stock Analysis Tab
         # Auto-refresh
         st.header("Auto Refresh")
         auto_refresh = st.checkbox("Enable auto refresh", value=False)
-        refresh_interval = st.slider("Refresh interval (seconds)", min_value=30, max_value=300, value=60) if auto_refresh else 60
+        refresh_interval = st.slider("Refresh interval (seconds)", min_value=10, max_value=300, value=60) if auto_refresh else 60
     
     # Main content area for stock analysis
     if st.session_state.current_stock:
@@ -211,38 +315,105 @@ with tabs[0]:  # Stock Analysis Tab
                     last_price = latest_data['Close']
                     last_score = latest_data['composite_score']
                     
-                    if st.session_state.current_stock in st.session_state.portfolio:
-                        # Already own this stock - should we hold or sell?
-                        position = st.session_state.portfolio[st.session_state.current_stock]
-                        avg_price = position['avg_price']
+                    # Use real-time analyzer to determine signal
+                    indicator_settings = {
+                        'short_ma': short_ma,
+                        'long_ma': long_ma,
+                        'rsi_period': rsi_period,
+                        'rsi_overbought': rsi_overbought,
+                        'rsi_oversold': rsi_oversold,
+                        'macd_fast': macd_fast,
+                        'macd_slow': macd_slow,
+                        'macd_signal': macd_signal,
+                        'bb_period': bb_period,
+                        'bb_std': bb_std,
+                        'risk_percentage': risk_percentage
+                    }
+                    
+                    analysis = st.session_state.real_time_analyzer.analyze_stock(
+                        st.session_state.current_stock,
+                        indicator_settings
+                    )
+                    
+                    if analysis:
+                        signal = analysis['signal']
+                        signal_text = signal['type']
+                        signal_strength = signal['strength']
+                        signal_desc = signal['desc']
                         
-                        if last_score < 0.4:
-                            signal_text = "SELL"
-                            signal_color = "red"
-                        else:
-                            signal_text = "HOLD"
-                            signal_color = "orange"
-                            
-                        # Show current P&L
-                        current_pnl = (last_price - avg_price) / avg_price * 100
-                        pnl_text = f"P&L: {current_pnl:.2f}%"
-                    else:
-                        # Don't own this stock - should we buy?
-                        if last_score > 0.6:
-                            signal_text = "BUY"
+                        # Determine color based on signal type
+                        if signal_text in ['BUY', 'COVER']:
                             signal_color = "green"
-                        elif last_score < 0.4:
-                            signal_text = "AVOID"
+                        elif signal_text in ['SELL', 'SHORT']:
                             signal_color = "red"
                         else:
-                            signal_text = "WAIT"
                             signal_color = "orange"
                             
-                        pnl_text = ""
+                        # Get P&L if in portfolio
+                        if st.session_state.current_stock in st.session_state.portfolio:
+                            position = st.session_state.portfolio[st.session_state.current_stock]
+                            position_type = position.get('position_type', 'LONG')
+                            avg_price = position['avg_price']
+                            
+                            if position_type == 'LONG':
+                                current_pnl = (last_price - avg_price) / avg_price * 100
+                                pnl_text = f"P&L: {current_pnl:.2f}%"
+                            else:  # SHORT position
+                                current_pnl = (avg_price - last_price) / avg_price * 100
+                                pnl_text = f"P&L: {current_pnl:.2f}%"
+                        else:
+                            pnl_text = ""
+                    else:
+                        # Fallback if real-time analyzer fails
+                        if st.session_state.current_stock in st.session_state.portfolio:
+                            position = st.session_state.portfolio[st.session_state.current_stock]
+                            position_type = position.get('position_type', 'LONG')
+                            avg_price = position['avg_price']
+                            
+                            if position_type == 'LONG':
+                                if last_score < 0.4:
+                                    signal_text = "SELL"
+                                    signal_color = "red"
+                                    signal_desc = "Consider selling based on bearish indicators."
+                                else:
+                                    signal_text = "HOLD"
+                                    signal_color = "orange"
+                                    signal_desc = "Continue holding the long position."
+                                    
+                                current_pnl = (last_price - avg_price) / avg_price * 100
+                                pnl_text = f"P&L: {current_pnl:.2f}%"
+                            else:  # SHORT position
+                                if last_score > 0.6:
+                                    signal_text = "COVER"
+                                    signal_color = "green"
+                                    signal_desc = "Consider covering short position based on bullish indicators."
+                                else:
+                                    signal_text = "HOLD"
+                                    signal_color = "orange"
+                                    signal_desc = "Continue holding the short position."
+                                    
+                                current_pnl = (avg_price - last_price) / avg_price * 100
+                                pnl_text = f"P&L: {current_pnl:.2f}%"
+                        else:
+                            if last_score > 0.6:
+                                signal_text = "BUY"
+                                signal_color = "green"
+                                signal_desc = "Consider buying based on bullish indicators."
+                            elif last_score < 0.4:
+                                signal_text = "SHORT"
+                                signal_color = "red"
+                                signal_desc = "Consider shorting based on bearish indicators."
+                            else:
+                                signal_text = "WAIT"
+                                signal_color = "orange"
+                                signal_desc = "No clear signal. Wait for more definitive movement."
+                                
+                            pnl_text = ""
+                            signal_strength = abs(last_score - 0.5) * 2  # Convert 0-1 score to 0-1 strength
                     
                     # Display trading signal and recommendations
                     st.subheader("Trading Signal")
-                    signal_cols = st.columns([1, 2, 2])
+                    signal_cols = st.columns([1, 1, 1, 1])
                     with signal_cols[0]:
                         st.markdown(f"<h2 style='color:{signal_color};text-align:center;'>{signal_text}</h2>", unsafe_allow_html=True)
                         if pnl_text:
@@ -250,10 +421,13 @@ with tabs[0]:  # Stock Analysis Tab
                     with signal_cols[1]:
                         st.metric("Current Price", f"{currency_symbol}{last_price:.2f}", f"{latest_data['Close_pct_change']:.2f}%" if 'Close_pct_change' in latest_data else None)
                     with signal_cols[2]:
-                        st.metric("Confidence Score", f"{last_score:.2f}", None)
+                        st.metric("Confidence", f"{signal_strength:.2f}", None)
+                        st.progress(signal_strength)
+                    with signal_cols[3]:
+                        st.markdown(f"<p><strong>Signal:</strong> {signal_desc}</p>", unsafe_allow_html=True)
                     
                     # Action buttons for trading
-                    trade_cols = st.columns(3)
+                    trade_cols = st.columns(4)
                     with trade_cols[0]:
                         # Define trade quantity input
                         quantity = st.number_input("Quantity", min_value=1, value=1, step=1)
@@ -265,51 +439,99 @@ with tabs[0]:  # Stock Analysis Tab
                         st.write(f"Est. Trade Value: {currency_symbol}{trade_value:.2f}")
                         st.write(f"Est. Broker Fee: {currency_symbol}{broker_fee:.2f}")
                         
-                    with trade_cols[2]:
-                        # Buy/Sell buttons based on current portfolio
-                        if st.session_state.current_stock in st.session_state.portfolio:
-                            if st.button("📈 SELL"):
-                                # Record the sell transaction
-                                position = st.session_state.portfolio[st.session_state.current_stock]
-                                buy_price = position['avg_price']
-                                sell_price = last_price
-                                
-                                # Calculate P&L including broker fees
-                                buy_value = buy_price * quantity
-                                sell_value = sell_price * quantity
-                                buy_fee = buy_value * st.session_state.broker_fee_percent / 100
-                                sell_fee = sell_value * st.session_state.broker_fee_percent / 100
-                                
-                                pnl = sell_value - buy_value - buy_fee - sell_fee
-                                pnl_percent = (pnl / buy_value) * 100
-                                
-                                # Record the trade
-                                st.session_state.trades.append({
-                                    'ticker': st.session_state.current_stock,
-                                    'action': 'SELL',
-                                    'quantity': quantity,
-                                    'price': sell_price,
-                                    'value': sell_value,
-                                    'fee': sell_fee,
-                                    'pnl': pnl,
-                                    'pnl_percent': pnl_percent,
-                                    'timestamp': datetime.datetime.now(),
-                                    'confidence_score': last_score
-                                })
-                                
-                                # Update overall P&L
-                                st.session_state.overall_pnl += pnl
-                                
-                                # Remove from portfolio if all shares sold
-                                if quantity >= position['quantity']:
-                                    del st.session_state.portfolio[st.session_state.current_stock]
-                                else:
-                                    position['quantity'] -= quantity
-                                
-                                st.success(f"Sold {quantity} shares of {st.session_state.current_stock} at {currency_symbol}{sell_price:.2f}")
-                                st.rerun()
-                        else:
-                            if st.button("📉 BUY"):
+                    # Display appropriate action buttons based on current portfolio
+                    stock_in_portfolio = st.session_state.current_stock in st.session_state.portfolio
+                    
+                    if stock_in_portfolio:
+                        position = st.session_state.portfolio[st.session_state.current_stock]
+                        position_type = position.get('position_type', 'LONG')
+                        
+                        with trade_cols[2]:
+                            if position_type == 'LONG':
+                                if st.button("📈 SELL LONG"):
+                                    # Record the sell transaction
+                                    buy_price = position['avg_price']
+                                    sell_price = last_price
+                                    
+                                    # Calculate P&L including broker fees
+                                    buy_value = buy_price * quantity
+                                    sell_value = sell_price * quantity
+                                    buy_fee = buy_value * st.session_state.broker_fee_percent / 100
+                                    sell_fee = sell_value * st.session_state.broker_fee_percent / 100
+                                    
+                                    pnl = sell_value - buy_value - buy_fee - sell_fee
+                                    pnl_percent = (pnl / buy_value) * 100
+                                    
+                                    # Record the trade
+                                    st.session_state.trades.append({
+                                        'ticker': st.session_state.current_stock,
+                                        'action': 'SELL',
+                                        'position_type': 'LONG',
+                                        'quantity': quantity,
+                                        'price': sell_price,
+                                        'value': sell_value,
+                                        'fee': sell_fee,
+                                        'pnl': pnl,
+                                        'pnl_percent': pnl_percent,
+                                        'timestamp': datetime.datetime.now(),
+                                        'confidence_score': last_score
+                                    })
+                                    
+                                    # Update overall P&L
+                                    st.session_state.overall_pnl += pnl
+                                    
+                                    # Remove from portfolio if all shares sold
+                                    if quantity >= position['quantity']:
+                                        del st.session_state.portfolio[st.session_state.current_stock]
+                                    else:
+                                        position['quantity'] -= quantity
+                                    
+                                    st.success(f"Sold {quantity} shares of {st.session_state.current_stock} at {currency_symbol}{sell_price:.2f}")
+                                    st.rerun()
+                            else:  # SHORT position
+                                if st.button("📈 COVER SHORT"):
+                                    # Record the cover transaction
+                                    short_price = position['avg_price']
+                                    cover_price = last_price
+                                    
+                                    # Calculate P&L including broker fees
+                                    short_value = short_price * quantity
+                                    cover_value = cover_price * quantity
+                                    short_fee = short_value * st.session_state.broker_fee_percent / 100
+                                    cover_fee = cover_value * st.session_state.broker_fee_percent / 100
+                                    
+                                    pnl = short_value - cover_value - short_fee - cover_fee
+                                    pnl_percent = (pnl / short_value) * 100
+                                    
+                                    # Record the trade
+                                    st.session_state.trades.append({
+                                        'ticker': st.session_state.current_stock,
+                                        'action': 'COVER',
+                                        'position_type': 'SHORT',
+                                        'quantity': quantity,
+                                        'price': cover_price,
+                                        'value': cover_value,
+                                        'fee': cover_fee,
+                                        'pnl': pnl,
+                                        'pnl_percent': pnl_percent,
+                                        'timestamp': datetime.datetime.now(),
+                                        'confidence_score': last_score
+                                    })
+                                    
+                                    # Update overall P&L
+                                    st.session_state.overall_pnl += pnl
+                                    
+                                    # Remove from portfolio if all shares covered
+                                    if quantity >= position['quantity']:
+                                        del st.session_state.portfolio[st.session_state.current_stock]
+                                    else:
+                                        position['quantity'] -= quantity
+                                    
+                                    st.success(f"Covered {quantity} shares of {st.session_state.current_stock} at {currency_symbol}{cover_price:.2f}")
+                                    st.rerun()
+                    else:
+                        with trade_cols[2]:
+                            if st.button("📉 BUY LONG"):
                                 # Record the buy transaction
                                 buy_price = last_price
                                 buy_value = buy_price * quantity
@@ -320,13 +542,15 @@ with tabs[0]:  # Stock Analysis Tab
                                     'quantity': quantity,
                                     'avg_price': buy_price,
                                     'timestamp': datetime.datetime.now(),
-                                    'confidence_score': last_score
+                                    'confidence_score': last_score,
+                                    'position_type': 'LONG'
                                 }
                                 
                                 # Record the trade
                                 st.session_state.trades.append({
                                     'ticker': st.session_state.current_stock,
                                     'action': 'BUY',
+                                    'position_type': 'LONG',
                                     'quantity': quantity,
                                     'price': buy_price,
                                     'value': buy_value,
@@ -338,9 +562,42 @@ with tabs[0]:  # Stock Analysis Tab
                                 st.success(f"Bought {quantity} shares of {st.session_state.current_stock} at {currency_symbol}{buy_price:.2f}")
                                 st.rerun()
                     
+                    with trade_cols[3]:
+                        if not stock_in_portfolio:
+                            if st.button("📈 SHORT SELL"):
+                                # Record the short transaction
+                                short_price = last_price
+                                short_value = short_price * quantity
+                                short_fee = short_value * st.session_state.broker_fee_percent / 100
+                                
+                                # Add to portfolio
+                                st.session_state.portfolio[st.session_state.current_stock] = {
+                                    'quantity': quantity,
+                                    'avg_price': short_price,
+                                    'timestamp': datetime.datetime.now(),
+                                    'confidence_score': last_score,
+                                    'position_type': 'SHORT'
+                                }
+                                
+                                # Record the trade
+                                st.session_state.trades.append({
+                                    'ticker': st.session_state.current_stock,
+                                    'action': 'SHORT',
+                                    'position_type': 'SHORT',
+                                    'quantity': quantity,
+                                    'price': short_price,
+                                    'value': short_value,
+                                    'fee': short_fee,
+                                    'timestamp': datetime.datetime.now(),
+                                    'confidence_score': last_score
+                                })
+                                
+                                st.success(f"Shorted {quantity} shares of {st.session_state.current_stock} at {currency_symbol}{short_price:.2f}")
+                                st.rerun()
+                    
                     # Risk management parameters
                     st.subheader("Risk Management Parameters")
-                    risk_cols = st.columns(3)
+                    risk_cols = st.columns(4)
                     with risk_cols[0]:
                         st.metric("Suggested Entry Price", f"{currency_symbol}{risk_params['entry_price']:.2f}")
                     with risk_cols[1]:
@@ -349,11 +606,20 @@ with tabs[0]:  # Stock Analysis Tab
                         st.metric("Suggested Take Profit", f"{currency_symbol}{risk_params['take_profit']:.2f}")
                     
                     # Estimated Hold Time
-                    hold_time_mins = int(20 / (latest_data['Close_pct_change'] if 'Close_pct_change' in latest_data and abs(latest_data['Close_pct_change']) > 0 else 0.5) * 60)
-                    if hold_time_mins > 360:  # Cap at 6 hours for readability
-                        hold_time_mins = 360
-                    
-                    st.info(f"📅 Suggested Hold Time: Approximately {hold_time_mins//60} hours {hold_time_mins%60} minutes for this intraday trade")
+                    with risk_cols[3]:
+                        hold_time_mins = int(20 / (latest_data['Close_pct_change'] if 'Close_pct_change' in latest_data and abs(latest_data['Close_pct_change']) > 0 else 0.5) * 60)
+                        if hold_time_mins > 360:  # Cap at 6 hours for readability
+                            hold_time_mins = 360
+                            
+                        hours = hold_time_mins // 60
+                        minutes = hold_time_mins % 60
+                        
+                        if hours > 0:
+                            hold_time_text = f"{hours}h {minutes}m"
+                        else:
+                            hold_time_text = f"{minutes}m"
+                            
+                        st.metric("Est. Hold Time", hold_time_text)
                     
                     # Create main price chart with indicators
                     st.subheader("Price Chart with Indicators")
@@ -399,6 +665,25 @@ with tabs[0]:  # Stock Analysis Tab
                         go.Scatter(x=df.index, y=df['BB_lower'], name='BB Lower', line=dict(color='rgba(0,128,0,0.3)')),
                         row=1, col=1
                     )
+                    
+                    # Add trade positions if in portfolio
+                    if st.session_state.current_stock in st.session_state.portfolio:
+                        position = st.session_state.portfolio[st.session_state.current_stock]
+                        position_type = position.get('position_type', 'LONG')
+                        position_price = position['avg_price']
+                        position_quantity = position['quantity']
+                        
+                        # Add horizontal line at position price
+                        fig.add_trace(
+                            go.Scatter(
+                                x=[df.index[0], df.index[-1]],
+                                y=[position_price, position_price],
+                                mode='lines',
+                                line=dict(color='purple', width=2, dash='dash'),
+                                name=f"{position_type} Position ({position_quantity} shares)"
+                            ),
+                            row=1, col=1
+                        )
                     
                     # Add buy/sell signals if available
                     buy_signals = df[df['signal'] == 1]
@@ -546,7 +831,7 @@ with tabs[0]:  # Stock Analysis Tab
                         explanation += "<p>Price is within the Bollinger Bands, suggesting <strong>normal volatility</strong>.</p>"
                     
                     # Final recommendation
-                    explanation += f"<p><strong>Overall recommendation:</strong> The composite score is {latest_data['composite_score']:.2f}, which suggests a {signal_text} signal.</p>"
+                    explanation += f"<p><strong>Overall recommendation:</strong> {signal_desc}</p>"
                     
                     explanation += "</div>"
                     st.markdown(explanation, unsafe_allow_html=True)
@@ -639,11 +924,12 @@ with tabs[0]:  # Stock Analysis Tab
         3. **Customize indicators** by adjusting parameters in the sidebar
         4. **Analyze the charts** and trading signals
         5. **Set risk parameters** to suit your trading style
+        6. **Start real-time monitoring** to receive alerts when signals change
         
         The tool will provide:
         - Real-time stock data visualization
         - Technical indicator calculations
-        - Buy/sell signals based on indicator thresholds
+        - Buy/sell/short/cover signals based on indicators
         - Composite scoring for trade recommendations
         - Risk management parameters (stop-loss and take-profit levels)
         """)
@@ -672,21 +958,30 @@ with tabs[1]:  # Portfolio Tab
             # Calculate position value and P&L
             quantity = position['quantity']
             avg_price = position['avg_price']
-            position_value = quantity * current_price
-            cost_basis = quantity * avg_price
-            pnl = position_value - cost_basis
-            pnl_percent = (pnl / cost_basis) * 100
+            position_type = position.get('position_type', 'LONG')
+            
+            if position_type == 'LONG':
+                position_value = quantity * current_price
+                cost_basis = quantity * avg_price
+                pnl = position_value - cost_basis
+                pnl_percent = (pnl / cost_basis) * 100
+            else:  # SHORT position
+                position_value = quantity * current_price  # Current liability
+                cost_basis = quantity * avg_price  # Initial credit received
+                pnl = cost_basis - position_value  # Profit if current price < avg price
+                pnl_percent = (pnl / cost_basis) * 100
             
             # Add to total portfolio value
-            total_value += position_value
+            total_value += (cost_basis + pnl)
             
             # Add to portfolio data for display
             portfolio_data.append({
                 'Ticker': ticker,
+                'Type': position_type,
                 'Quantity': quantity,
                 'Avg. Price': f"{currency_symbol}{avg_price:.2f}",
                 'Current Price': f"{currency_symbol}{current_price:.2f}",
-                'Value': f"{currency_symbol}{position_value:.2f}",
+                'Value': f"{currency_symbol}{abs(position_value):.2f}",
                 'P&L': f"{currency_symbol}{pnl:.2f} ({pnl_percent:.2f}%)",
                 'Purchase Date': position['timestamp'].strftime("%Y-%m-%d %H:%M"),
                 'Confidence Score': f"{position['confidence_score']:.2f}"
@@ -701,12 +996,36 @@ with tabs[1]:  # Portfolio Tab
         
         # Portfolio visualization - pie chart of positions
         if portfolio_data:
-            labels = [d['Ticker'] for d in portfolio_data]
-            values = [float(d['Value'].replace(currency_symbol, '')) for d in portfolio_data]
+            # Group by position type
+            long_positions = [d for d in portfolio_data if d['Type'] == 'LONG']
+            short_positions = [d for d in portfolio_data if d['Type'] == 'SHORT']
             
-            fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.3)])
-            fig.update_layout(title_text="Portfolio Allocation")
-            st.plotly_chart(fig, use_container_width=True)
+            # Create columns for long and short positions
+            portfolio_cols = st.columns(2)
+            
+            with portfolio_cols[0]:
+                if long_positions:
+                    st.subheader("Long Positions")
+                    labels = [d['Ticker'] for d in long_positions]
+                    values = [float(d['Value'].replace(currency_symbol, '')) for d in long_positions]
+                    
+                    fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.3)])
+                    fig.update_layout(title_text="Long Position Allocation")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No long positions in portfolio")
+            
+            with portfolio_cols[1]:
+                if short_positions:
+                    st.subheader("Short Positions")
+                    labels = [d['Ticker'] for d in short_positions]
+                    values = [float(d['Value'].replace(currency_symbol, '')) for d in short_positions]
+                    
+                    fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.3)])
+                    fig.update_layout(title_text="Short Position Allocation")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No short positions in portfolio")
 
 with tabs[2]:  # Trade History Tab
     st.header("Trade History")
@@ -717,15 +1036,30 @@ with tabs[2]:  # Trade History Tab
         # Prepare trade history data
         trade_history = []
         for trade in st.session_state.trades:
+            position_type = trade.get('position_type', 'LONG')
+            action = trade['action']
+            
+            # Format action for display
+            if position_type == 'LONG' and action == 'BUY':
+                display_action = "BUY LONG"
+            elif position_type == 'LONG' and action == 'SELL':
+                display_action = "SELL LONG"
+            elif position_type == 'SHORT' and action == 'SHORT':
+                display_action = "SHORT SELL"
+            elif position_type == 'SHORT' and action == 'COVER':
+                display_action = "COVER SHORT"
+            else:
+                display_action = action
+            
             trade_history.append({
                 'Ticker': trade['ticker'],
-                'Action': trade['action'],
+                'Action': display_action,
                 'Quantity': trade['quantity'],
                 'Price': f"{currency_symbol}{trade['price']:.2f}",
                 'Value': f"{currency_symbol}{trade['value']:.2f}",
                 'Fee': f"{currency_symbol}{trade['fee']:.2f}",
                 'Date': trade['timestamp'].strftime("%Y-%m-%d %H:%M"),
-                'P&L': f"{currency_symbol}{trade.get('pnl', 0):.2f} ({trade.get('pnl_percent', 0):.2f}%)" if trade['action'] == 'SELL' else '-',
+                'P&L': f"{currency_symbol}{trade.get('pnl', 0):.2f} ({trade.get('pnl_percent', 0):.2f}%)" if action in ['SELL', 'COVER'] else '-',
                 'Confidence': f"{trade['confidence_score']:.2f}"
             })
         
@@ -733,16 +1067,17 @@ with tabs[2]:  # Trade History Tab
         st.dataframe(trade_history)
         
         # Performance visualization
-        if any(trade['action'] == 'SELL' for trade in st.session_state.trades):
+        closed_trades = [t for t in st.session_state.trades if t['action'] in ['SELL', 'COVER']]
+        if closed_trades:
             # Create win/loss chart
-            win_trades = [t for t in st.session_state.trades if t['action'] == 'SELL' and t.get('pnl', 0) > 0]
-            loss_trades = [t for t in st.session_state.trades if t['action'] == 'SELL' and t.get('pnl', 0) <= 0]
+            win_trades = [t for t in closed_trades if t.get('pnl', 0) > 0]
+            loss_trades = [t for t in closed_trades if t.get('pnl', 0) <= 0]
             
             win_pnl = sum(t.get('pnl', 0) for t in win_trades)
             loss_pnl = sum(t.get('pnl', 0) for t in loss_trades)
             
             # Win/loss metrics
-            win_rate = len(win_trades) / (len(win_trades) + len(loss_trades)) * 100 if (len(win_trades) + len(loss_trades)) > 0 else 0
+            win_rate = len(win_trades) / len(closed_trades) * 100 if len(closed_trades) > 0 else 0
             
             # Display metrics
             metrics_cols = st.columns(4)
@@ -756,35 +1091,142 @@ with tabs[2]:  # Trade History Tab
                 st.metric("Net P&L", f"{currency_symbol}{st.session_state.overall_pnl:.2f}")
             
             # Chart showing P&L over time
-            pnl_data = [t for t in st.session_state.trades if t['action'] == 'SELL']
-            if pnl_data:
+            if closed_trades:
                 pnl_df = pd.DataFrame({
-                    'Date': [t['timestamp'] for t in pnl_data],
-                    'P&L': [t.get('pnl', 0) for t in pnl_data],
-                    'Ticker': [t['ticker'] for t in pnl_data]
+                    'Date': [t['timestamp'] for t in closed_trades],
+                    'P&L': [t.get('pnl', 0) for t in closed_trades],
+                    'Ticker': [t['ticker'] for t in closed_trades],
+                    'Type': [t.get('position_type', 'LONG') for t in closed_trades]
                 })
                 pnl_df = pnl_df.sort_values('Date')
                 pnl_df['Cumulative P&L'] = pnl_df['P&L'].cumsum()
                 
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=pnl_df['Date'],
-                    y=pnl_df['Cumulative P&L'],
-                    mode='lines+markers',
-                    name='Cumulative P&L',
-                    line=dict(color='green' if pnl_df['Cumulative P&L'].iloc[-1] > 0 else 'red')
-                ))
+                # Create performance charts
+                perf_cols = st.columns(2)
                 
-                fig.update_layout(
-                    title="Cumulative P&L Over Time",
-                    xaxis_title="Date",
-                    yaxis_title=f"P&L ({currency_symbol})",
-                    height=400
-                )
+                with perf_cols[0]:
+                    # Cumulative P&L chart
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=pnl_df['Date'],
+                        y=pnl_df['Cumulative P&L'],
+                        mode='lines+markers',
+                        name='Cumulative P&L',
+                        line=dict(color='green' if pnl_df['Cumulative P&L'].iloc[-1] > 0 else 'red')
+                    ))
+                    
+                    fig.update_layout(
+                        title="Cumulative P&L Over Time",
+                        xaxis_title="Date",
+                        yaxis_title=f"P&L ({currency_symbol})",
+                        height=400
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
                 
-                st.plotly_chart(fig, use_container_width=True)
+                with perf_cols[1]:
+                    # P&L by position type
+                    long_pnl = pnl_df[pnl_df['Type'] == 'LONG']['P&L'].sum()
+                    short_pnl = pnl_df[pnl_df['Type'] == 'SHORT']['P&L'].sum()
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(
+                        x=['Long Positions', 'Short Positions'],
+                        y=[long_pnl, short_pnl],
+                        marker_color=['blue', 'red']
+                    ))
+                    
+                    fig.update_layout(
+                        title="P&L by Position Type",
+                        xaxis_title="Position Type",
+                        yaxis_title=f"P&L ({currency_symbol})",
+                        height=400
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
 
-with tabs[3]:  # Beginner's Guide Tab
+with tabs[3]:  # Alerts & Signals Tab
+    st.header("Real-Time Alerts & Signals")
+    
+    # SMS notification setup
+    st.subheader("SMS Notification Settings")
+    
+    alert_cols = st.columns(2)
+    
+    with alert_cols[0]:
+        st.write("Current phone number for alerts:")
+        if st.session_state.user_phone:
+            st.code(st.session_state.user_phone)
+        else:
+            st.warning("No phone number set. Add one at the top of the page to receive SMS alerts.")
+    
+    with alert_cols[1]:
+        if st.session_state.monitoring_active:
+            st.success("Real-time monitoring is active")
+            st.write(f"Alert frequency: {st.session_state.alert_frequency} minutes between alerts")
+        else:
+            st.warning("Real-time monitoring is not active. Start it at the top of the page.")
+    
+    # Real-time alerts history
+    st.subheader("Recent Alerts")
+    
+    if not st.session_state.app_alerts:
+        st.info("No alerts generated yet. Start real-time monitoring to receive alerts.")
+    else:
+        # Reverse order to show most recent first
+        alerts = list(reversed(st.session_state.app_alerts))
+        
+        alert_df = pd.DataFrame({
+            'Time': [a['timestamp'].strftime("%Y-%m-%d %H:%M:%S") for a in alerts],
+            'Ticker': [a['ticker'] for a in alerts],
+            'Signal': [a['signal_type'] for a in alerts],
+            'Price': [f"{currency_symbol}{a['price']:.2f}" for a in alerts],
+            'Confidence': [f"{a['score']:.2f}" for a in alerts]
+        })
+        
+        st.dataframe(alert_df)
+    
+    # SMS log
+    st.subheader("SMS Alert Log")
+    
+    if not st.session_state.alert_log:
+        st.info("No SMS alerts have been sent yet.")
+    else:
+        # Show SMS alert history
+        sms_log = list(reversed(st.session_state.alert_log))
+        
+        sms_df = pd.DataFrame({
+            'Time': [a['timestamp'].strftime("%Y-%m-%d %H:%M:%S") for a in sms_log],
+            'Type': [a['type'] for a in sms_log],
+            'Recipient': [a['recipient'] for a in sms_log],
+            'Status': [a['status'] for a in sms_log],
+            'Message': [a['message'] for a in sms_log]
+        })
+        
+        st.dataframe(sms_df)
+    
+    # Test SMS alert
+    st.subheader("Test SMS Alert")
+    
+    test_cols = st.columns(2)
+    
+    with test_cols[0]:
+        test_phone = st.text_input("Test Phone Number (E.164 format)", value=st.session_state.user_phone, placeholder="+919876543210")
+    
+    with test_cols[1]:
+        if st.button("Send Test SMS"):
+            if test_phone:
+                from utils.alert_manager import send_sms_alert
+                success = send_sms_alert(test_phone, "This is a test alert from your Stock Analysis App!")
+                
+                if success:
+                    st.success("Test SMS sent successfully!")
+                else:
+                    st.error("Failed to send test SMS. Check your Twilio credentials and phone number format.")
+            else:
+                st.warning("Please enter a phone number first.")
+
+with tabs[4]:  # Beginner's Guide Tab
     st.header("Beginner's Guide to Stock Trading")
     
     st.subheader("What are Technical Indicators?")
@@ -810,19 +1252,39 @@ with tabs[3]:  # Beginner's Guide Tab
     
     st.subheader("Understanding Trade Signals")
     st.markdown("""
-    Our app generates trade signals based on multiple indicators:
+    Our app generates different types of trade signals:
     
-    **BUY** - Strong positive signal suggesting you should consider purchasing the stock.
+    **BUY LONG** - Strong positive signal suggesting you should purchase the stock expecting its price to increase.
     
-    **SELL** - Strong negative signal suggesting you should consider selling your position.
+    **SELL LONG** - Signal to sell a stock you own to take profits or cut losses.
+    
+    **SHORT SELL** - Signal to borrow and sell a stock expecting its price to decrease.
+    
+    **COVER SHORT** - Signal to buy back borrowed shares to close a short position.
     
     **HOLD** - Neutral signal suggesting you should maintain your current position.
     
-    **WAIT** - Neutral signal suggesting you should wait for a clearer trend before buying.
-    
-    **AVOID** - Negative signal suggesting you should not enter a position.
+    **WAIT** - Neutral signal suggesting you should wait for a clearer trend before taking any position.
     
     Remember that no signal is 100% accurate. Always combine technical analysis with fundamental research and risk management.
+    """)
+    
+    st.subheader("How Short Selling Works")
+    st.markdown("""
+    Short selling is a trading strategy used when you expect a stock's price to fall:
+    
+    1. **Borrow shares** - You borrow shares from a broker (this happens automatically when you short sell)
+    2. **Sell the borrowed shares** - The proceeds from the sale are credited to your account
+    3. **Wait for price to fall** - If the price falls as expected, you profit
+    4. **Buy back shares to "cover" your position** - You buy the shares at the lower price
+    5. **Return the borrowed shares** - The borrowed shares are returned to the lender
+    
+    Your profit is the difference between your short sell price and cover price, minus any fees or interest.
+    
+    **Risks of Short Selling:**
+    - **Unlimited loss potential** - Unlike buying stocks (where your maximum loss is your investment), short selling has theoretically unlimited loss potential if the stock price rises significantly
+    - **Margin requirements** - Short selling requires a margin account and is subject to margin calls
+    - **Short squeeze** - When a heavily shorted stock rises, short sellers may rush to cover, driving the price even higher
     """)
     
     st.subheader("Risk Management")
